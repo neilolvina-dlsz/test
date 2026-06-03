@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoltMatch: Electric Circuit Interactive Game</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    .neon-text-cyan {
+      text-shadow: 0 0 10px rgba(6, 182, 212, 0.7), 0 0 20px rgba(6, 182, 212, 0.4);
+    }
+    .neon-text-amber {
+      text-shadow: 0 0 10px rgba(245, 158, 11, 0.7), 0 0 20px rgba(245, 158, 11, 0.4);
+    }
+    .neon-border-cyan {
+      box-shadow: 0 0 15px rgba(6, 182, 212, 0.25), inset 0 0 15px rgba(6, 182, 212, 0.15);
+    }
+    .neon-border-emerald {
+      box-shadow: 0 0 15px rgba(16, 185, 129, 0.25), inset 0 0 15px rgba(16, 185, 129, 0.15);
+    }
+    /* Circuit Animation classes */
+    @keyframes dash {
+      to {
+        stroke-dashoffset: -40;
+      }
+    }
+    .current-flow {
+      stroke-dasharray: 8, 12;
+      animation: dash 1.5s linear infinite;
+    }
+    .current-flow-reverse {
+      stroke-dasharray: 8, 12;
+      animation: dash 1.5s linear infinite reverse;
+    }
+    @keyframes glow {
+      0%, 100% { filter: drop-shadow(0 0 2px rgba(245, 158, 11, 0.4)); }
+      50% { filter: drop-shadow(0 0 15px rgba(245, 158, 11, 0.9)); }
+    }
+    .bulb-glow {
+      animation: glow 1.5s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-cyan-500 selection:text-slate-950 overflow-x-hidden">
+
+  <!-- Audio Context & Tone Generator setup -->
+  <script>
+    // Safe Audio Context creation on interaction
+    let audioCtx = null;
+    let mainHumOsc = null;
+    let mainHumGain = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    }
+
+    function playSound(type) {
+      initAudio();
+      if (!audioCtx) return;
+
+      const now = audioCtx.currentTime;
+      
+      if (type === 'click') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(600, now);
+        osc.frequency.exponentialRampToValueAtTime(150, now + 0.08);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.08);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.08);
+      } 
+      else if (type === 'success') {
+        // Double sweet arpeggio
+        const notes = [330, 440, 660, 880];
+        notes.forEach((freq, index) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + index * 0.07);
+          gain.gain.setValueAtTime(0.15, now + index * 0.07);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + index * 0.07 + 0.2);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now + index * 0.07);
+          osc.stop(now + index * 0.07 + 0.22);
+        });
+      } 
+      else if (type === 'error') {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(140, now);
+        osc.frequency.linearRampToValueAtTime(90, now + 0.25);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now);
+        osc.stop(now + 0.25);
+      }
+      else if (type === 'complete') {
+        // Fanfare chord
+        const chord = [261.63, 329.63, 392.00, 523.25];
+        chord.forEach((freq) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, now);
+          osc.frequency.exponentialRampToValueAtTime(freq * 1.5, now + 0.6);
+          gain.gain.setValueAtTime(0.1, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.start(now);
+          osc.stop(now + 0.8);
+        });
+      }
+    }
+
+    // Toggle continuous AC electricity hum when circuit is operational
+    function toggleHum(turnOn) {
+      initAudio();
+      if (!audioCtx) return;
+
+      const now = audioCtx.currentTime;
+
+      if (turnOn) {
+        if (!mainHumOsc) {
+          mainHumOsc = audioCtx.createOscillator();
+          mainHumGain = audioCtx.createGain();
+          
+          // Low hum representing electric power
+          mainHumOsc.type = 'triangle';
+          mainHumOsc.frequency.setValueAtTime(60, now); // 60Hz utility hum simulation
+          
+          // Add a subtle overtone for crispness
+          const overtone = audioCtx.createOscillator();
+          const overtoneGain = audioCtx.createGain();
+          overtone.type = 'sine';
+          overtone.frequency.setValueAtTime(120, now);
+          overtoneGain.gain.setValueAtTime(0.01, now);
+          overtone.connect(overtoneGain);
+          overtoneGain.connect(mainHumGain);
+          overtone.start(now);
+
+          mainHumGain.gain.setValueAtTime(0, now);
+          mainHumGain.gain.linearRampToValueAtTime(0.08, now + 0.2); // Smooth volume fade-in
+          
+          mainHumOsc.connect(mainHumGain);
+          mainHumGain.connect(audioCtx.destination);
+          mainHumOsc.start(now);
+        }
+      } else {
+        if (mainHumOsc) {
+          mainHumGain.gain.setValueAtTime(mainHumGain.gain.value, now);
+          mainHumGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+          setTimeout(() => {
+            if (mainHumOsc) {
+              mainHumOsc.stop();
+              mainHumOsc = null;
+              mainHumGain = null;
+            }
+          }, 160);
+        }
+      }
+    }
+  </script>
+
+  <!-- App Container -->
+  <div class="flex-grow flex flex-col max-w-7xl w-full mx-auto p-4 md:p-6 lg:p-8">
+    
+    <!-- Top Header -->
+    <header class="flex flex-col md:flex-row justify-between items-center gap-4 mb-6 border-b border-slate-800 pb-5">
+      <div class="text-center md:text-left">
+        <div class="flex items-center gap-3 justify-center md:justify-start">
+          <span class="p-2 bg-cyan-500/10 rounded-lg text-cyan-400 border border-cyan-500/30">
+            <svg class="w-6 h-6 animate-pulse" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+            </svg>
+          </span>
+          <h1 class="text-2xl md:text-3xl font-extrabold tracking-wider text-slate-100 font-['Orbitron']">
+            VOLT<span class="text-cyan-400">MATCH</span>
+          </h1>
+        </div>
+        <p class="text-slate-400 text-sm mt-1">Interactive Electric Circuits Lab & Game</p>
+      </div>
+
+      <!-- Live Gamification Dashboard -->
+      <div class="flex items-center gap-6 bg-slate-900/80 border border-slate-800 px-6 py-3 rounded-2xl">
+        <div class="text-center">
+          <div class="text-xs font-bold text-slate-500 uppercase font-['Orbitron']">Score</div>
+          <div id="score-display" class="text-2xl font-black text-cyan-400 font-['Orbitron'] neon-text-cyan">0</div>
+        </div>
+        <div class="h-8 w-[1px] bg-slate-800"></div>
+        <div class="text-center">
+          <div class="text-xs font-bold text-slate-500 uppercase font-['Orbitron']">Combo Streak</div>
+          <div id="streak-display" class="text-2xl font-black text-amber-500 font-['Orbitron'] neon-text-amber">x0</div>
+        </div>
+        <div class="h-8 w-[1px] bg-slate-800"></div>
+        <div class="text-center">
+          <div class="text-xs font-bold text-slate-500 uppercase font-['Orbitron']">Stars</div>
+          <div id="stars-display" class="text-amber-400 flex gap-0.5 text-lg">
+            <span class="opacity-30">★</span>
+            <span class="opacity-30">★</span>
+            <span class="opacity-30">★</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Interactive Navigation Tabs -->
+    <nav class="flex border-b border-slate-800 gap-2 mb-6 scrollbar-none overflow-x-auto pb-1">
+      <button onclick="switchTab('symbols')" id="tab-btn-symbols" class="tab-btn active px-5 py-3 text-sm font-semibold rounded-t-xl transition-all duration-300 border-t-2 border-transparent hover:bg-slate-900 text-cyan-400 border-cyan-500 bg-slate-900/50">
+        1. Symbol Matcher
+      </button>
+      <button onclick="switchTab('diagram')" id="tab-btn-diagram" class="tab-btn px-5 py-3 text-sm font-semibold rounded-t-xl transition-all duration-300 border-t-2 border-transparent hover:bg-slate-900 text-slate-400">
+        2. Circuit Lab (Schematic)
+      </button>
+      <button onclick="switchTab('codex')" id="tab-btn-codex" class="tab-btn px-5 py-3 text-sm font-semibold rounded-t-xl transition-all duration-300 border-t-2 border-transparent hover:bg-slate-900 text-slate-400">
+        3. Component Codex
+      </button>
+    </nav>
+
+    <!-- Feedback Banner / Live Alert Prompt -->
+    <div id="feedback-alert" class="hidden mb-6 p-4 rounded-xl flex items-center gap-3 transition-all duration-300">
+      <span id="feedback-icon" class="text-xl"></span>
+      <p id="feedback-text" class="font-medium text-sm md:text-base"></p>
+    </div>
+
+    <!-- MAIN INTERACTIVE AREAS -->
+    <main class="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+      
+      <!-- LEFT + MID PANELS: Game Screens -->
+      <div class="lg:col-span-2 space-y-6">
+
+        <!-- GAME MODE 1: SYMBOL MATCHER -->
+        <section id="pane-symbols" class="game-pane block">
+          <div class="bg-slate-900/40 border border-slate-800/80 rounded-3xl p-6 relative overflow-hidden">
+            <h2 class="text-xl font-bold mb-2 flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+              Level 1: Match the Components to Symbols
+            </h2>
+            <p class="text-slate-400 text-sm mb-6">Select a component card, then click on its correct technical schematic symbol card to form a pair.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-4">
+              <!-- Left Column: Names -->
+              <div>
+                <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3">Component Names</h3>
+                <div id="symbol-names-container" class="space-y-3">
+                  <!-- Generated dynamically -->
+                </div>
+              </div>
+              
+              <!-- Right Column: Symbols -->
+              <div>
+                <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3">Schematic Symbols</h3>
+                <div id="symbol-cards-container" class="grid grid-cols-2 gap-3">
+                  <!-- Generated dynamically -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Level Complete Box -->
+            <div id="symbols-complete-box" class="hidden absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center text-center p-6 transition-all duration-500">
+              <div class="text-emerald-400 text-5xl mb-4">🏆</div>
+              <h3 class="text-2xl font-bold text-slate-100 font-['Orbitron']">Symbol Master Unlock!</h3>
+              <p class="text-slate-400 max-w-md mt-2 mb-6">You successfully paired all basic circuit schematic symbols! Ready to assemble an operating laboratory circuit?</p>
+              <button onclick="switchTab('diagram')" class="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-extrabold rounded-xl transition duration-300 transform hover:scale-105 shadow-lg shadow-cyan-500/25">
+                Advance to Circuit Lab →
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <!-- GAME MODE 2: CIRCUIT DIAGRAM ASSEMBLY -->
+        <section id="pane-diagram" class="game-pane hidden">
+          <div class="bg-slate-900/40 border border-slate-800/80 rounded-3xl p-6 relative">
+            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+              <div>
+                <h2 class="text-xl font-bold flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+                  Level 2: The Interactive Assembly Board
+                </h2>
+                <p class="text-slate-400 text-sm">Design the circuit correctly! Drag/Click components into their logical slots on the schematic loop below.</p>
+              </div>
+              <!-- Reset button for diagram -->
+              <button onclick="resetLab()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold rounded-lg transition text-slate-300">
+                Reset Assembly
+              </button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-6 items-center">
+              
+              <!-- Left Sidebar: Components to place -->
+              <div class="md:col-span-1 space-y-3">
+                <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Available Parts</h3>
+                <div id="lab-parts-tray" class="flex md:flex-col gap-3 overflow-x-auto md:overflow-x-visible pb-2 md:pb-0">
+                  <!-- Component Draggables/Clickables -->
+                </div>
+              </div>
+
+              <!-- Right Main: The live Interactive Schematic SVG -->
+              <div class="md:col-span-3 bg-slate-950/80 rounded-2xl border border-slate-800 p-4 relative flex flex-col items-center justify-center">
+                
+                <!-- Circuit Power Dashboard -->
+                <div class="absolute top-4 right-4 flex items-center gap-3">
+                  <div class="flex items-center gap-1.5 bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800">
+                    <span class="w-2 h-2 rounded-full bg-slate-600" id="power-indicator"></span>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest font-['Orbitron']" id="power-text">Offline</span>
+                  </div>
+                  <!-- Switch Clicker (only interactive when assembly complete) -->
+                  <button id="schematic-switch-btn" disabled onclick="toggleVirtualSwitch()" class="opacity-50 cursor-not-allowed bg-slate-800 hover:bg-slate-700 text-slate-300 font-extrabold text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition duration-300 uppercase tracking-wider font-['Orbitron']">
+                    Toggle Switch
+                  </button>
+                </div>
+
+                <!-- Dynamic Schematic Canvas -->
+                <svg id="schematic-svg" class="w-full max-w-[420px] h-[300px]" viewBox="0 0 400 300">
+                  <!-- Wire Loop Path -->
+                  <path d="M 80 50 L 320 50 L 320 250 L 80 250 Z" fill="none" stroke="#334155" stroke-width="4" stroke-linejoin="round" />
+                  
+                  <!-- Flowing current overlay (hidden initially) -->
+                  <path id="current-wire" d="M 80 50 L 320 50 L 320 250 L 80 250 Z" fill="none" stroke="transparent" stroke-width="4" stroke-linejoin="round" class="" />
+
+                  <!-- Slot A: Top Wire Segment (Switch Placement) -->
+                  <g class="slot-group" onclick="selectSlot('slot-switch')">
+                    <rect x="170" y="35" width="60" height="30" fill="#0f172a" stroke="#475569" stroke-width="2" stroke-dasharray="4" rx="4" class="cursor-pointer hover:stroke-cyan-500 transition-all duration-300" id="rect-slot-switch" />
+                    <text x="200" y="53" fill="#64748b" font-size="9" font-weight="bold" text-anchor="middle" id="text-slot-switch">SWITCH</text>
+                    <!-- Success Symbol (rendered when correct item is placed) -->
+                    <g id="rendered-slot-switch" class="hidden"></g>
+                  </g>
+
+                  <!-- Slot B: Right Wire Segment (Bulb/Lamp Placement) -->
+                  <g class="slot-group" onclick="selectSlot('slot-bulb')">
+                    <rect x="305" y="120" width="30" height="60" fill="#0f172a" stroke="#475569" stroke-width="2" stroke-dasharray="4" rx="4" class="cursor-pointer hover:stroke-cyan-500 transition-all duration-300" id="rect-slot-bulb" />
+                    <text x="320" y="153" fill="#64748b" font-size="9" font-weight="bold" text-anchor="middle" id="text-slot-bulb">BULB</text>
+                    <g id="rendered-slot-bulb" class="hidden"></g>
+                  </g>
+
+                  <!-- Slot C: Bottom Wire Segment (Resistor Placement) -->
+                  <g class="slot-group" onclick="selectSlot('slot-resistor')">
+                    <rect x="170" y="235" width="60" height="30" fill="#0f172a" stroke="#475569" stroke-width="2" stroke-dasharray="4" rx="4" class="cursor-pointer hover:stroke-cyan-500 transition-all duration-300" id="rect-slot-resistor" />
+                    <text x="200" y="253" fill="#64748b" font-size="9" font-weight="bold" text-anchor="middle" id="text-slot-resistor">RESISTOR</text>
+                    <g id="rendered-slot-resistor" class="hidden"></g>
+                  </g>
+
+                  <!-- Slot D: Left Wire Segment (Battery / Cell Placement) -->
+                  <g class="slot-group" onclick="selectSlot('slot-battery')">
+                    <rect x="65" y="120" width="30" height="60" fill="#0f172a" stroke="#475569" stroke-width="2" stroke-dasharray="4" rx="4" class="cursor-pointer hover:stroke-cyan-500 transition-all duration-300" id="rect-slot-battery" />
+                    <text x="80" y="153" fill="#64748b" font-size="9" font-weight="bold" text-anchor="middle" id="text-slot-battery">BATTERY</text>
+                    <g id="rendered-slot-battery" class="hidden"></g>
+                  </g>
+
+                  <!-- Ammeter Icon - Simple decorative schematic component -->
+                  <g transform="translate(130, 50)" class="pointer-events-none">
+                    <circle cx="0" cy="0" r="10" fill="#1e293b" stroke="#334155" stroke-width="2" />
+                    <text x="0" y="3" fill="#94a3b8" font-size="8" font-weight="bold" text-anchor="middle">A</text>
+                  </g>
+                </svg>
+
+                <div class="mt-4 text-center w-full">
+                  <p id="assembly-prompt-banner" class="text-xs font-semibold px-4 py-2 rounded-lg bg-cyan-950/40 text-cyan-400 border border-cyan-800/50 inline-block">
+                    Select a component from the left, then click on the matching slot in the circuit!
+                  </p>
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        <!-- GAME MODE 3: COMPONENT CODEX (DEFINITIONS) -->
+        <section id="pane-codex" class="game-pane hidden">
+          <div class="bg-slate-900/40 border border-slate-800/80 rounded-3xl p-6 relative overflow-hidden">
+            <h2 class="text-xl font-bold mb-2 flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+              Level 3: Component Codex Definition Matcher
+            </h2>
+            <p class="text-slate-400 text-sm mb-6 font-medium">Match each foundational electrical component to its scientific physics definition.</p>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <!-- Left definitions list -->
+              <div class="space-y-3" id="codex-defs-container">
+                <!-- Generated dynamically -->
+              </div>
+
+              <!-- Right matching names list -->
+              <div class="space-y-3 animate-fade-in" id="codex-names-container">
+                <!-- Generated dynamically -->
+              </div>
+            </div>
+
+            <!-- Codex Win Box -->
+            <div id="codex-complete-box" class="hidden absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center text-center p-6 transition-all duration-500">
+              <div class="text-yellow-400 text-6xl mb-4">👑</div>
+              <h3 class="text-3xl font-extrabold text-slate-100 font-['Orbitron']">Ultimate Circuit Wizard!</h3>
+              <p class="text-slate-400 max-w-md mt-2 mb-6">You've successfully mastered symbols, circuit construction, and electrical physics codex components!</p>
+              <div class="flex gap-4">
+                <button onclick="restartFullGame()" class="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl transition duration-300 transform hover:scale-105">
+                  Play Again
+                </button>
+                <button onclick="switchTab('diagram')" class="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition">
+                  Return to Sandbox Lab
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- RIGHT PANEL: Circuit Physics Lab Controls / Helper Box -->
+      <div class="lg:col-span-1 space-y-6">
+        
+        <!-- Live Circuit Stats -->
+        <div class="bg-gradient-to-br from-slate-900 to-slate-950 rounded-3xl p-6 border border-slate-800/80">
+          <h3 class="font-bold text-slate-100 mb-4 tracking-wider uppercase font-['Orbitron'] text-xs flex items-center gap-2 text-cyan-400">
+            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6a7.5 7.5 0 107.5 7.5h-7.5V6z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0013.5 3v7.5z" />
+            </svg>
+            Live Physics Readings
+          </h3>
+          
+          <div class="space-y-4">
+            <div>
+              <div class="flex justify-between text-xs text-slate-400 mb-1 font-semibold">
+                <span>Voltage (V)</span>
+                <span id="physics-volts-val" class="text-cyan-400 font-bold font-['Orbitron']">0.0 V</span>
+              </div>
+              <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                <div id="physics-volts-bar" class="bg-cyan-500 h-full w-0 transition-all duration-300"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs text-slate-400 mb-1 font-semibold">
+                <span>Resistance (Ω)</span>
+                <span id="physics-ohms-val" class="text-amber-500 font-bold font-['Orbitron']">10.0 Ω</span>
+              </div>
+              <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                <div id="physics-ohms-bar" class="bg-amber-500 h-full w-[33%] transition-all duration-300"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs text-slate-400 mb-1 font-semibold">
+                <span>Current (I = V/R)</span>
+                <span id="physics-amps-val" class="text-emerald-400 font-bold font-['Orbitron']">0.00 A</span>
+              </div>
+              <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                <div id="physics-amps-bar" class="bg-emerald-500 h-full w-0 transition-all duration-300"></div>
+              </div>
+            </div>
+
+            <!-- Ohms Law Note -->
+            <div class="p-3 bg-slate-950 rounded-xl border border-slate-800/60 mt-4">
+              <p class="text-[11px] text-slate-400 leading-relaxed font-medium">
+                <strong class="text-slate-300">Ohm's Law:</strong> The electric current ($I$) flowing through a component is directly proportional to the voltage ($V$) across it and inversely proportional to its resistance ($R$). Formula: 
+                <span class="block text-center text-cyan-400 font-semibold my-1 font-['Orbitron'] text-xs">$I = \frac{V}{R}$</span>
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Science Encyclopedia/Guide Card -->
+        <div class="bg-slate-900/40 rounded-3xl p-6 border border-slate-800/80">
+          <h3 class="font-bold text-slate-200 text-sm mb-3 font-['Orbitron']">Pro Circuit Tips</h3>
+          <ul class="space-y-2 text-xs text-slate-400 leading-relaxed list-disc list-inside">
+            <li>A <strong class="text-cyan-400">Battery</strong> stores chemical energy & creates a potential difference to push electrons.</li>
+            <li>A closed <strong class="text-cyan-400">Switch</strong> forms a continuous, unbroken path of low resistance, permitting electric charges to drift.</li>
+            <li>A <strong class="text-cyan-400">Resistor</strong> acts like a bottleneck, restricting charge flow to protect sensitive components from overheating.</li>
+            <li>A conventional <strong class="text-cyan-400">Current Flow</strong> model goes from the positive terminal (+) to the negative terminal (-).</li>
+          </ul>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-8 pt-4 border-t border-slate-900 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-500 gap-3">
+      <p>© 2026 VoltMatch Lab. Learn Physics Intuitively.</p>
+      <div class="flex gap-4">
+        <a href="#" onclick="showQuickHelpModal()" class="hover:text-slate-300 transition underline">Component Cheat Sheet</a>
+      </div>
+    </footer>
+  </div>
+
+  <!-- HELP MODAL / CHEAT SHEET -->
+  <div id="help-modal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-xl w-full relative">
+      <button onclick="closeQuickHelpModal()" class="absolute top-4 right-4 text-slate-400 hover:text-slate-100 font-bold text-lg">✕</button>
+      
+      <h3 class="text-xl font-bold mb-4 font-['Orbitron'] text-cyan-400">Component Cheat Sheet</h3>
+      <div class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+        <div class="flex gap-4 items-center p-2 rounded-xl bg-slate-950/50">
+          <div class="w-16 h-12 bg-slate-900 flex items-center justify-center rounded-lg text-amber-400 border border-slate-800">
+            <!-- Lamp symbol -->
+            <svg class="w-8 h-8" viewBox="0 0 40 40">
+              <circle cx="20" cy="20" r="12" fill="none" stroke="currentColor" stroke-width="2"/>
+              <path d="M12 12 L28 28 M28 12 L12 28" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+          <div>
+            <h4 class="font-bold text-sm text-slate-200">Light Bulb (Lamp)</h4>
+            <p class="text-xs text-slate-400">An electrical load that transforms electrical current energy directly into radiant light energy.</p>
+          </div>
+        </div>
+
+        <div class="flex gap-4 items-center p-2 rounded-xl bg-slate-950/50">
+          <div class="w-16 h-12 bg-slate-900 flex items-center justify-center rounded-lg text-cyan-400 border border-slate-800">
+            <!-- Switch symbol -->
+            <svg class="w-8 h-8" viewBox="0 0 40 40">
+              <circle cx="12" cy="20" r="2" fill="currentColor" />
+              <circle cx="28" cy="20" r="2" fill="currentColor" />
+              <path d="M12 20 L24 10" stroke="currentColor" stroke-width="2" fill="none" />
+            </svg>
+          </div>
+          <div>
+            <h4 class="font-bold text-sm text-slate-200">Switch (Open)</h4>
+            <p class="text-xs text-slate-400">An easy trigger to sever the path of the circuit loop, immediately halting electron flow.</p>
+          </div>
+        </div>
+
+        <div class="flex gap-4 items-center p-2 rounded-xl bg-slate-950/50">
+          <div class="w-16 h-12 bg-slate-900 flex items-center justify-center rounded-lg text-emerald-400 border border-slate-800">
+            <!-- Battery symbol -->
+            <svg class="w-8 h-8" viewBox="0 0 40 40">
+              <path d="M14 12 L14 28 M18 16 L18 24 M22 12 L22 28 M26 16 L26 24" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+          </div>
+          <div>
+            <h4 class="font-bold text-sm text-slate-200">Battery / Cell</h4>
+            <p class="text-xs text-slate-400">Combines chemical actions to deliver continuous electromotive voltage potential.</p>
+          </div>
+        </div>
+
+        <div class="flex gap-4 items-center p-2 rounded-xl bg-slate-950/50">
+          <div class="w-16 h-12 bg-slate-900 flex items-center justify-center rounded-lg text-violet-400 border border-slate-800">
+            <!-- Resistor symbol -->
+            <svg class="w-8 h-8" viewBox="0 0 40 40">
+              <path d="M6 20 L12 20 L14 14 L18 26 L22 14 L26 26 L28 20 L34 20" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+          </div>
+          <div>
+            <h4 class="font-bold text-sm text-slate-200">Resistor</h4>
+            <p class="text-xs text-slate-400">Specifically designed to hinder flow intensity of electrical current (measured in Ohms).</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confetti/Celebration Helper script -->
+  <script>
+    // Simplified custom canvas particle system for celebrating level completions
+    class ConfettiEmitter {
+      constructor() {
+        const canvas = document.createElement('canvas');
+        canvas.id = 'confetti-canvas';
+        canvas.style.position = 'fixed';
+        canvas.style.top = '0';
+        canvas.style.left = '0';
+        canvas.style.width = '100vw';
+        canvas.style.height = '100vh';
+        canvas.style.pointerEvents = 'none';
+        canvas.style.zIndex = '999';
+        document.body.appendChild(canvas);
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.particles = [];
+        this.active = false;
+        
+        window.addEventListener('resize', () => this.resize());
+        this.resize();
+      }
+      resize() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+      }
+      burst(count = 80) {
+        this.active = true;
+        const colors = ['#06b6d4', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6'];
+        for (let i = 0; i < count; i++) {
+          this.particles.push({
+            x: Math.random() * this.canvas.width,
+            y: this.canvas.height + 20,
+            vx: (Math.random() - 0.5) * 12,
+            vy: -Math.random() * 15 - 10,
+            size: Math.random() * 6 + 4,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            rotation: Math.random() * 360,
+            spin: (Math.random() - 0.5) * 10
+          });
+        }
+        if (this.particles.length === count) {
+          this.tick();
+        }
+      }
+      tick() {
+        if (!this.active) return;
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+          const p = this.particles[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.vy += 0.35; // gravity
+          p.rotation += p.spin;
+          
+          this.ctx.save();
+          this.ctx.translate(p.x, p.y);
+          this.ctx.rotate(p.rotation * Math.PI / 180);
+          this.ctx.fillStyle = p.color;
+          this.ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+          this.ctx.restore();
+          
+          if (p.y > this.canvas.height + 20) {
+            this.particles.splice(i, 1);
+          }
+        }
+        if (this.particles.length > 0) {
+          requestAnimationFrame(() => this.tick());
+        } else {
+          this.active = false;
+        }
+      }
+    }
+    
+    let confetti = null;
+    function runConfetti() {
+      if (!confetti) confetti = new ConfettiEmitter();
+      confetti.burst();
+    }
+  </script>
+
+  <!-- CORE GAME ENGINE -->
+  <script>
+    // GAME GLOBAL STATE
+    const state = {
+      score: 0,
+      streak: 0,
+      stars: 0,
+      
+      // LEVEL 1: Symbol Matcher States
+      symbols: {
+        selectedName: null,
+        selectedSymbol: null,
+        completedPairs: [], // List of ID keys paired successfully
+        data: [
+          { id: 'battery', name: 'Battery (Cell)', symbolSvg: `<path d="M10 20 L30 20 M16 10 L16 30 M24 15 L24 25" stroke="currentColor" stroke-width="2.5" fill="none" />` },
+          { id: 'bulb', name: 'Light Bulb (Lamp)', symbolSvg: `<circle cx="20" cy="20" r="10" stroke="currentColor" stroke-width="2.5" fill="none" /><path d="M13 13 L27 27 M27 13 L13 27" stroke="currentColor" stroke-width="2" />` },
+          { id: 'switch', name: 'Switch (Open)', symbolSvg: `<circle cx="10" cy="20" r="2.5" fill="currentColor" /><circle cx="30" cy="20" r="2.5" fill="currentColor" /><path d="M12 20 L26 10" stroke="currentColor" stroke-width="2.5" fill="none" />` },
+          { id: 'resistor', name: 'Resistor', symbolSvg: `<path d="M 4 20 L 10 20 L 13 12 L 17 28 L 21 12 L 25 28 L 27 20 L 36 20" stroke="currentColor" stroke-width="2.5" fill="none" />` },
+          { id: 'ammeter', name: 'Ammeter', symbolSvg: `<circle cx="20" cy="20" r="11" stroke="currentColor" stroke-width="2.5" fill="none" /><text x="20" y="24" font-size="12" font-weight="extrabold" fill="currentColor" text-anchor="middle">A</text>` },
+          { id: 'voltmeter', name: 'Voltmeter', symbolSvg: `<circle cx="20" cy="20" r="11" stroke="currentColor" stroke-width="2.5" fill="none" /><text x="20" y="24" font-size="12" font-weight="extrabold" fill="currentColor" text-anchor="middle">V</text>` }
+        ]
+      },
+
+      // LEVEL 2: Laboratory Diagram Assembly State
+      diagram: {
+        selectedPart: null,
+        slotsFilled: {
+          'slot-battery': null,  // Holds component key if placed
+          'slot-bulb': null,
+          'slot-resistor': null,
+          'slot-switch': null
+        },
+        data: [
+          { id: 'battery', name: 'Battery', symbolMarkup: `<path d="M25 15 L25 45 M21 22 L21 38 M17 15 L17 45 M13 22 L13 38" stroke="#10b981" stroke-width="3" fill="none" /><text x="5" y="12" fill="#10b981" font-size="11" font-weight="bold">+</text><text x="31" y="12" fill="#10b981" font-size="11" font-weight="bold">-</text>` },
+          { id: 'bulb', name: 'Light Bulb', symbolMarkup: `<circle cx="15" cy="30" r="12" stroke="#f59e0b" stroke-width="3" fill="none" /><path d="M6.5 21.5 L23.5 38.5 M23.5 21.5 L6.5 38.5" stroke="#f59e0b" stroke-width="2" />` },
+          { id: 'resistor', name: 'Resistor', symbolMarkup: `<path d="M10 15 L20 15 L23 7 L27 23 L31 7 L35 23 L37 15 L48 15" stroke="#a78bfa" stroke-width="3" fill="none" />` },
+          { id: 'switch', name: 'Switch', symbolMarkup: `<circle cx="15" cy="15" r="3" fill="#64748b" /><circle cx="45" cy="15" r="3" fill="#64748b" /><path id="schematic-switch-arm" d="M17 15 L43 5" stroke="#06b6d4" stroke-width="3" fill="none" />` }
+        ],
+        switchClosed: false
+      },
+
+      // LEVEL 3: Component Codex States
+      codex: {
+        selectedDef: null,
+        selectedName: null,
+        completedCodexPairs: [],
+        data: [
+          { id: 'resistor', name: 'Resistor', desc: 'Limits the amount of electric current to guard highly sensitive microcomponents.' },
+          { id: 'battery', name: 'Battery', desc: 'Imparts a chemical potential electrical voltage push that drives negative electrons forward.' },
+          { id: 'ammeter', name: 'Ammeter', desc: 'A low-resistance device hooked in series to precisely count current passing by.' },
+          { id: 'voltmeter', name: 'Voltmeter', desc: 'A very high resistance component hooked in parallel to sense electromotive difference.' },
+          { id: 'switch', name: 'Switch', desc: 'An operator tool that either builds or dismantles a physical conductive pathway loop.' },
+          { id: 'fuse', name: 'Fuse', desc: 'A deliberate safety weak link engineered to melt away during sudden spikes of high-amp flow.' }
+        ]
+      }
+    };
+
+    // UPDATE GENERAL UI SCOREBOARDS
+    function addPoints(amount) {
+      state.score += amount;
+      if (state.score < 0) state.score = 0;
+      
+      // Calculate star thresholds
+      if (state.score >= 1500) state.stars = 3;
+      else if (state.score >= 800) state.stars = 2;
+      else if (state.score >= 200) state.stars = 1;
+      else state.stars = 0;
+
+      updateGamificationUI();
+    }
+
+    function updateGamificationUI() {
+      // Score animate update
+      document.getElementById('score-display').innerText = state.score;
+      document.getElementById('streak-display').innerText = `x${state.streak}`;
+
+      // Update Stars
+      const starSpan = document.getElementById('stars-display');
+      starSpan.innerHTML = '';
+      for (let i = 1; i <= 3; i++) {
+        if (i <= state.stars) {
+          starSpan.innerHTML += '<span class="text-amber-400">★</span>';
+        } else {
+          starSpan.innerHTML += '<span class="opacity-30">★</span>';
+        }
+      }
+    }
+
+    // FEEDBACK ALERTS
+    function triggerFeedback(isCorrect, message) {
+      const banner = document.getElementById('feedback-alert');
+      const icon = document.getElementById('feedback-icon');
+      const text = document.getElementById('feedback-text');
+
+      banner.className = `mb-6 p-4 rounded-xl flex items-center gap-3 transition-all duration-300 transform scale-100 ${
+        isCorrect 
+        ? 'bg-emerald-950/80 border border-emerald-800 text-emerald-400 font-bold' 
+        : 'bg-rose-950/80 border border-rose-800 text-rose-400 font-bold'
+      }`;
+
+      icon.innerHTML = isCorrect ? '✓ Success' : '✗ Try Again';
+      text.innerText = message;
+      banner.style.display = 'flex';
+
+      // Auto fade-out after 4 seconds
+      setTimeout(() => {
+        banner.style.display = 'none';
+      }, 4000);
+    }
+
+    // NAVIGATION
+    function switchTab(tabId) {
+      playSound('click');
+      
+      // Switch active class on navigation button
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active', 'text-cyan-400', 'border-cyan-500', 'bg-slate-900/50');
+        btn.classList.add('text-slate-400', 'border-transparent');
+      });
+      
+      const activeBtn = document.getElementById(`tab-btn-${tabId}`);
+      activeBtn.classList.add('active', 'text-cyan-400', 'border-cyan-500', 'bg-slate-900/50');
+      activeBtn.classList.remove('text-slate-400', 'border-transparent');
+
+      // Swap panes
+      document.querySelectorAll('.game-pane').forEach(pane => {
+        pane.classList.add('hidden');
+        pane.classList.remove('block');
+      });
+      
+      document.getElementById(`pane-${tabId}`).classList.remove('hidden');
+      document.getElementById(`pane-${tabId}`).classList.add('block');
+    }
+
+    // Modal triggers
+    function showQuickHelpModal() {
+      playSound('click');
+      document.getElementById('help-modal').classList.remove('hidden');
+    }
+    function closeQuickHelpModal() {
+      playSound('click');
+      document.getElementById('help-modal').classList.add('hidden');
+    }
+
+
+    /* ==============================================
+       LEVEL 1: SYMBOL MATCHER CODE
+       ============================================== */
+    function shuffleArray(array) {
+      return [...array].sort(() => Math.random() - 0.5);
+    }
+
+    function initSymbolLevel() {
+      const symbolsContainer = document.getElementById('symbol-cards-container');
+      const namesContainer = document.getElementById('symbol-names-container');
+      
+      symbolsContainer.innerHTML = '';
+      namesContainer.innerHTML = '';
+
+      // Shuffled arrays
+      const shuffledNames = shuffleArray(state.symbols.data);
+      const shuffledSymbols = shuffleArray(state.symbols.data);
+
+      shuffledNames.forEach(item => {
+        const btn = document.createElement('button');
+        btn.id = `sym-name-${item.id}`;
+        btn.onclick = () => selectSymbolName(item.id);
+        btn.className = 'w-full text-left p-3.5 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/50 rounded-xl transition-all duration-200 text-sm font-semibold flex items-center justify-between text-slate-300';
+        btn.innerHTML = `
+          <span>${item.name}</span>
+          <span class="indicator-dot w-2 h-2 rounded-full bg-slate-700"></span>
+        `;
+        namesContainer.appendChild(btn);
+      });
+
+      shuffledSymbols.forEach(item => {
+        const div = document.createElement('div');
+        div.id = `sym-card-${item.id}`;
+        div.onclick = () => selectSymbolCard(item.id);
+        div.className = 'aspect-square flex flex-col items-center justify-center p-4 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/50 rounded-xl cursor-pointer transition-all duration-200 text-slate-300';
+        div.innerHTML = `
+          <svg class="w-14 h-14 text-slate-400 mb-2" viewBox="0 0 40 40">
+            ${item.symbolSvg}
+          </svg>
+        `;
+        symbolsContainer.appendChild(div);
+      });
+    }
+
+    function selectSymbolName(id) {
+      playSound('click');
+      if (state.symbols.completedPairs.includes(id)) return;
+
+      // Unselect previous
+      if (state.symbols.selectedName) {
+        const prev = document.getElementById(`sym-name-${state.symbols.selectedName}`);
+        if (prev) prev.className = prev.className.replace(' border-cyan-500', ' border-slate-800');
+      }
+
+      state.symbols.selectedName = id;
+      const el = document.getElementById(`sym-name-${id}`);
+      el.className = el.className.replace(' border-slate-800', ' border-cyan-500');
+
+      checkSymbolMatch();
+    }
+
+    function selectSymbolCard(id) {
+      playSound('click');
+      if (state.symbols.completedPairs.includes(id)) return;
+
+      // Unselect previous
+      if (state.symbols.selectedSymbol) {
+        const prev = document.getElementById(`sym-card-${state.symbols.selectedSymbol}`);
+        if (prev) prev.className = prev.className.replace(' border-cyan-500', ' border-slate-800');
+      }
+
+      state.symbols.selectedSymbol = id;
+      const el = document.getElementById(`sym-card-${id}`);
+      el.className = el.className.replace(' border-slate-800', ' border-cyan-500');
+
+      checkSymbolMatch();
+    }
+
+    function checkSymbolMatch() {
+      const { selectedName, selectedSymbol } = state.symbols;
+      if (!selectedName || !selectedSymbol) return;
+
+      if (selectedName === selectedSymbol) {
+        // MATCH DETECTED
+        playSound('success');
+        state.streak += 1;
+        addPoints(100 + (state.streak * 20)); // Match multipliers!
+
+        state.symbols.completedPairs.push(selectedName);
+
+        // Turn green & disable UI elements
+        const nameBtn = document.getElementById(`sym-name-${selectedName}`);
+        const cardDiv = document.getElementById(`sym-card-${selectedSymbol}`);
+
+        nameBtn.className = 'w-full text-left p-3.5 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-emerald-400 font-bold flex items-center justify-between cursor-default';
+        nameBtn.innerHTML = `<span>✔ ${state.symbols.data.find(x => x.id === selectedName).name}</span>`;
+        
+        cardDiv.className = 'aspect-square flex flex-col items-center justify-center p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl cursor-default text-emerald-400';
+        
+        triggerFeedback(true, "Correctly paired! You earned points!");
+
+        // Clear active selection states
+        state.symbols.selectedName = null;
+        state.symbols.selectedSymbol = null;
+
+        // Check level Win/End state
+        if (state.symbols.completedPairs.length === state.symbols.data.length) {
+          playSound('complete');
+          runConfetti();
+          setTimeout(() => {
+            document.getElementById('symbols-complete-box').classList.remove('hidden');
+          }, 800);
+        }
+      } else {
+        // MISMATCH
+        playSound('error');
+        state.streak = 0;
+        addPoints(-50); // Small penalty
+
+        const nameBtn = document.getElementById(`sym-name-${selectedName}`);
+        const cardDiv = document.getElementById(`sym-card-${selectedSymbol}`);
+
+        nameBtn.className = nameBtn.className.replace(' border-cyan-500', ' border-rose-500 bg-rose-950/10');
+        cardDiv.className = cardDiv.className.replace(' border-cyan-500', ' border-rose-500 bg-rose-950/10');
+
+        triggerFeedback(false, "Mismatched components! Think carefully about the diagram layout.");
+
+        // Clear selection to force click again
+        state.symbols.selectedName = null;
+        state.symbols.selectedSymbol = null;
+
+        setTimeout(() => {
+          nameBtn.className = 'w-full text-left p-3.5 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/50 rounded-xl transition-all duration-200 text-sm font-semibold flex items-center justify-between text-slate-300';
+          cardDiv.className = 'aspect-square flex flex-col items-center justify-center p-4 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/50 rounded-xl cursor-pointer transition-all duration-200 text-slate-300';
+        }, 1200);
+      }
+    }
+
+
+    /* ==============================================
+       LEVEL 2: INTERACTIVE SCHEMATIC LAB
+       ============================================== */
+    function initDiagramLevel() {
+      const tray = document.getElementById('lab-parts-tray');
+      tray.innerHTML = '';
+
+      state.diagram.data.forEach(part => {
+        const div = document.createElement('div');
+        div.id = `tray-part-${part.id}`;
+        div.onclick = () => selectLabPart(part.id);
+        div.className = 'flex items-center gap-3 p-3 bg-slate-900/60 border border-slate-800 hover:border-cyan-500 rounded-xl cursor-pointer transition-all duration-200 text-sm font-medium hover:scale-105 shrink-0 md:shrink';
+        div.innerHTML = `
+          <div class="p-1 bg-slate-950 rounded-lg text-cyan-400">
+            <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12h-15m0 0l3-3m-3 3l3 3" />
+            </svg>
+          </div>
+          <span class="text-xs md:text-sm text-slate-300 font-bold">${part.name}</span>
+        `;
+        tray.appendChild(div);
+      });
+    }
+
+    function selectLabPart(partId) {
+      playSound('click');
+      
+      // Clear active styling
+      if (state.diagram.selectedPart) {
+        const prev = document.getElementById(`tray-part-${state.diagram.selectedPart}`);
+        if (prev) prev.className = prev.className.replace(' border-cyan-500 bg-cyan-950/20', ' border-slate-800');
+      }
+
+      state.diagram.selectedPart = partId;
+      const el = document.getElementById(`tray-part-${partId}`);
+      el.className = el.className.replace(' border-slate-800', ' border-cyan-500 bg-cyan-950/20');
+
+      document.getElementById('assembly-prompt-banner').innerText = `Excellent! Now click on its target dotted matching box in the schematic canvas.`;
+    }
+
+    function selectSlot(slotId) {
+      if (!state.diagram.selectedPart) {
+        triggerFeedback(false, "Please select an available part from the tray first!");
+        return;
+      }
+
+      const activePart = state.diagram.selectedPart;
+      const targetExpectation = `slot-${activePart}`;
+
+      if (slotId === targetExpectation) {
+        // CORRECT SLOT PLACEMENT!
+        playSound('success');
+        addPoints(150);
+        state.streak += 1;
+
+        // Save state
+        state.diagram.slotsFilled[slotId] = activePart;
+
+        // Render component inside schematic loop
+        const innerG = document.getElementById(`rendered-${slotId}`);
+        const schematicPart = state.diagram.data.find(x => x.id === activePart);
+        
+        // Custom coordinates offset inside the dynamic schematic view
+        let transformStr = "";
+        if (slotId === 'slot-switch') transformStr = "translate(170, 35)";
+        if (slotId === 'slot-bulb') transformStr = "translate(305, 120)";
+        if (slotId === 'slot-resistor') transformStr = "translate(170, 235)";
+        if (slotId === 'slot-battery') transformStr = "translate(65, 120)";
+
+        innerG.innerHTML = schematicPart.symbolMarkup;
+        innerG.setAttribute("transform", transformStr);
+        innerG.classList.remove('hidden');
+
+        // Hide placement hint rect
+        document.getElementById(`rect-${slotId}`).style.opacity = '0';
+        document.getElementById(`text-${slotId}`).style.opacity = '0';
+
+        // Hide part from tray completely
+        document.getElementById(`tray-part-${activePart}`).classList.add('opacity-40', 'pointer-events-none');
+
+        // Clear active selecting choice
+        state.diagram.selectedPart = null;
+
+        triggerFeedback(true, `Splendid! Placed ${schematicPart.name} correctly into the circuit schema!`);
+        document.getElementById('assembly-prompt-banner').innerText = `Matched successfully! Pick another component.`;
+
+        // Check if fully built!
+        checkAssemblyComplete();
+      } else {
+        // WRONG COMPONENT PLACEMENT
+        playSound('error');
+        state.streak = 0;
+        addPoints(-30);
+
+        triggerFeedback(false, `Oops! That component belongs elsewhere. Examine electrical loop requirements.`);
+      }
+    }
+
+    function checkAssemblyComplete() {
+      const allDone = Object.values(state.diagram.slotsFilled).every(val => val !== null);
+      if (allDone) {
+        playSound('complete');
+        runConfetti();
+
+        // Unlock Switch interactive controls
+        const toggleBtn = document.getElementById('schematic-switch-btn');
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        toggleBtn.classList.add('bg-cyan-500', 'text-slate-950', 'hover:bg-cyan-400');
+
+        document.getElementById('assembly-prompt-banner').className = "text-xs font-semibold px-4 py-2 rounded-lg bg-emerald-950/40 text-emerald-400 border border-emerald-800/50 inline-block";
+        document.getElementById('assembly-prompt-banner').innerText = `Assembly Complete! Press "Toggle Switch" in the top right to start current flow!`;
+      }
+    }
+
+    function toggleVirtualSwitch() {
+      playSound('click');
+      state.diagram.switchClosed = !state.diagram.switchClosed;
+
+      const switchArm = document.getElementById('schematic-switch-arm');
+      const powerIndicator = document.getElementById('power-indicator');
+      const powerText = document.getElementById('power-text');
+      const currentOverlay = document.getElementById('current-wire');
+      
+      if (state.diagram.switchClosed) {
+        // CLOSE SWITCH
+        switchArm.setAttribute('d', 'M17 15 L43 15'); // Flat path indicating closed connection
+        powerIndicator.classList.remove('bg-slate-600');
+        powerIndicator.classList.add('bg-emerald-400', 'animate-pulse');
+        powerText.innerText = 'Online / Active';
+        powerText.className = "text-[10px] font-bold text-emerald-400 uppercase tracking-widest font-['Orbitron']";
+
+        // Animate electric current flow on wire loop
+        currentOverlay.setAttribute('stroke', '#06b6d4');
+        currentOverlay.className = 'current-flow';
+
+        // Bright bulb glowing physics visual
+        const bulbGlowNode = document.querySelector('#rendered-slot-bulb circle');
+        if (bulbGlowNode) {
+          bulbGlowNode.setAttribute('fill', '#f59e0b');
+          bulbGlowNode.classList.add('bulb-glow');
+        }
+
+        // Start synth hum sound
+        toggleHum(true);
+
+        // Update Live physics calculations (Simulation)
+        // Set standard 9V battery voltage, 15ohm resistance, Current is 0.6Amps
+        document.getElementById('physics-volts-val').innerText = "12.0 V";
+        document.getElementById('physics-volts-bar').style.width = "80%";
+        document.getElementById('physics-ohms-val').innerText = "15.0 Ω";
+        document.getElementById('physics-ohms-bar').style.width = "50%";
+        document.getElementById('physics-amps-val').innerText = "0.80 A";
+        document.getElementById('physics-amps-bar').style.width = "75%";
+
+        triggerFeedback(true, "Current flows freely! The electrons complete their round-trip journey.");
+      } else {
+        // OPEN SWITCH
+        switchArm.setAttribute('d', 'M17 15 L43 5'); // Angled open path
+        powerIndicator.classList.remove('bg-emerald-400', 'animate-pulse');
+        powerIndicator.classList.add('bg-slate-600');
+        powerText.innerText = 'Offline';
+        powerText.className = "text-[10px] font-bold text-slate-400 uppercase tracking-widest font-['Orbitron']";
+
+        // Turn off current & light bulb glow
+        currentOverlay.setAttribute('stroke', 'transparent');
+        currentOverlay.className = '';
+
+        const bulbGlowNode = document.querySelector('#rendered-slot-bulb circle');
+        if (bulbGlowNode) {
+          bulbGlowNode.setAttribute('fill', 'none');
+          bulbGlowNode.classList.remove('bulb-glow');
+        }
+
+        // Kill audio electricity hum
+        toggleHum(false);
+
+        // Reset live values
+        document.getElementById('physics-volts-val').innerText = "0.0 V";
+        document.getElementById('physics-volts-bar').style.width = "0%";
+        document.getElementById('physics-amps-val').innerText = "0.00 A";
+        document.getElementById('physics-amps-bar').style.width = "0%";
+
+        triggerFeedback(false, "Switch opened. The circuit path is broken, stopping current.");
+      }
+    }
+
+    function resetLab() {
+      playSound('click');
+      toggleHum(false);
+      state.diagram.switchClosed = false;
+      state.diagram.selectedPart = null;
+      state.diagram.slotsFilled = {
+        'slot-battery': null,
+        'slot-bulb': null,
+        'slot-resistor': null,
+        'slot-switch': null
+      };
+
+      // Reset DOM Slots inside SVG
+      const slots = ['slot-battery', 'slot-bulb', 'slot-resistor', 'slot-switch'];
+      slots.forEach(slot => {
+        document.getElementById(`rendered-${slot}`).innerHTML = '';
+        document.getElementById(`rendered-${slot}`).classList.add('hidden');
+        document.getElementById(`rect-${slot}`).style.opacity = '1';
+        document.getElementById(`text-${slot}`).style.opacity = '1';
+      });
+
+      // Reset Switch button properties
+      const toggleBtn = document.getElementById('schematic-switch-btn');
+      toggleBtn.setAttribute('disabled', 'true');
+      toggleBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      toggleBtn.classList.remove('bg-cyan-500', 'text-slate-950', 'hover:bg-cyan-400');
+
+      // Reset Dashboard indicator
+      document.getElementById('power-indicator').className = "w-2.5 h-2.5 rounded-full bg-slate-600";
+      document.getElementById('power-text').innerText = "Offline";
+      document.getElementById('power-text').className = "text-[10px] font-bold text-slate-400 uppercase tracking-widest font-['Orbitron']";
+
+      // Reset Current flowing visual
+      const currentOverlay = document.getElementById('current-wire');
+      currentOverlay.setAttribute('stroke', 'transparent');
+      currentOverlay.className = '';
+
+      // Reset live meters
+      document.getElementById('physics-volts-val').innerText = "0.0 V";
+      document.getElementById('physics-volts-bar').style.width = "0%";
+      document.getElementById('physics-amps-val').innerText = "0.00 A";
+      document.getElementById('physics-amps-bar').style.width = "0%";
+
+      initDiagramLevel();
+      document.getElementById('assembly-prompt-banner').className = "text-xs font-semibold px-4 py-2 rounded-lg bg-cyan-950/40 text-cyan-400 border border-cyan-800/50 inline-block";
+      document.getElementById('assembly-prompt-banner').innerText = "Select a component from the left, then click on the matching slot in the circuit!";
+    }
+
+
+    /* ==============================================
+       LEVEL 3: COMPONENT CODEX MATCHING
+       ============================================== */
+    function initCodexLevel() {
+      const defsContainer = document.getElementById('codex-defs-container');
+      const namesContainer = document.getElementById('codex-names-container');
+
+      defsContainer.innerHTML = '';
+      namesContainer.innerHTML = '';
+
+      const shuffledDefs = shuffleArray(state.codex.data);
+      const shuffledNames = shuffleArray(state.codex.data);
+
+      shuffledDefs.forEach(item => {
+        const btn = document.createElement('button');
+        btn.id = `codex-def-${item.id}`;
+        btn.onclick = () => selectCodexDef(item.id);
+        btn.className = 'w-full text-left p-4 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-violet-500 rounded-2xl transition duration-200 text-xs leading-relaxed text-slate-300';
+        btn.innerText = item.desc;
+        defsContainer.appendChild(btn);
+      });
+
+      shuffledNames.forEach(item => {
+        const btn = document.createElement('button');
+        btn.id = `codex-name-${item.id}`;
+        btn.onclick = () => selectCodexName(item.id);
+        btn.className = 'w-full text-left p-4 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-violet-500 rounded-xl transition duration-200 text-sm font-bold flex justify-between items-center text-slate-300';
+        btn.innerHTML = `
+          <span>${item.name}</span>
+          <span class="indicator-dot w-2 h-2 rounded-full bg-slate-700"></span>
+        `;
+        namesContainer.appendChild(btn);
+      });
+    }
+
+    function selectCodexDef(id) {
+      playSound('click');
+      if (state.codex.completedCodexPairs.includes(id)) return;
+
+      if (state.codex.selectedDef) {
+        const prev = document.getElementById(`codex-def-${state.codex.selectedDef}`);
+        if (prev) prev.className = prev.className.replace(' border-violet-500', ' border-slate-800');
+      }
+
+      state.codex.selectedDef = id;
+      const el = document.getElementById(`codex-def-${id}`);
+      el.className = el.className.replace(' border-slate-800', ' border-violet-500');
+
+      checkCodexMatch();
+    }
+
+    function selectCodexName(id) {
+      playSound('click');
+      if (state.codex.completedCodexPairs.includes(id)) return;
+
+      if (state.codex.selectedName) {
+        const prev = document.getElementById(`codex-name-${state.codex.selectedName}`);
+        if (prev) prev.className = prev.className.replace(' border-violet-500 border-dashed', ' border-slate-800');
+      }
+
+      state.codex.selectedName = id;
+      const el = document.getElementById(`codex-name-${id}`);
+      el.className = el.className.replace(' border-slate-800', ' border-violet-500 border-dashed');
+
+      checkCodexMatch();
+    }
+
+    function checkCodexMatch() {
+      const { selectedDef, selectedName } = state.codex;
+      if (!selectedDef || !selectedName) return;
+
+      if (selectedDef === selectedName) {
+        // MATCH MADE SUCCESS
+        playSound('success');
+        state.streak += 1;
+        addPoints(200 + (state.streak * 30));
+
+        state.codex.completedCodexPairs.push(selectedDef);
+
+        const defBtn = document.getElementById(`codex-def-${selectedDef}`);
+        const nameBtn = document.getElementById(`codex-name-${selectedName}`);
+
+        defBtn.className = 'w-full text-left p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-2xl text-emerald-400 font-medium cursor-default';
+        nameBtn.className = 'w-full text-left p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-emerald-400 font-bold flex justify-between items-center cursor-default';
+        nameBtn.innerHTML = `<span>✔ ${state.codex.data.find(x => x.id === selectedName).name}</span>`;
+
+        triggerFeedback(true, "Outstanding codex match! Science definitions solidified.");
+
+        state.codex.selectedDef = null;
+        state.codex.selectedName = null;
+
+        if (state.codex.completedCodexPairs.length === state.codex.data.length) {
+          playSound('complete');
+          runConfetti();
+          setTimeout(() => {
+            document.getElementById('codex-complete-box').classList.remove('hidden');
+          }, 800);
+        }
+      } else {
+        // WRONG PAIR
+        playSound('error');
+        state.streak = 0;
+        addPoints(-40);
+
+        const defBtn = document.getElementById(`codex-def-${selectedDef}`);
+        const nameBtn = document.getElementById(`codex-name-${selectedName}`);
+
+        defBtn.className = defBtn.className.replace(' border-violet-500', ' border-rose-500 bg-rose-950/10');
+        nameBtn.className = nameBtn.className.replace(' border-violet-500', ' border-rose-500 bg-rose-950/10');
+
+        triggerFeedback(false, "Scientific disconnect! The components features don't match that definition.");
+
+        state.codex.selectedDef = null;
+        state.codex.selectedName = null;
+
+        setTimeout(() => {
+          defBtn.className = 'w-full text-left p-4 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-violet-500 rounded-2xl transition duration-200 text-xs leading-relaxed text-slate-300';
+          nameBtn.className = 'w-full text-left p-4 bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-violet-500 rounded-xl transition duration-200 text-sm font-bold flex justify-between items-center text-slate-300';
+        }, 1200);
+      }
+    }
+
+
+    /* ==============================================
+       SYSTEM INITIALIZATION & RETRIES
+       ============================================== */
+    function restartFullGame() {
+      playSound('click');
+      state.score = 0;
+      state.streak = 0;
+      state.stars = 0;
+      state.symbols.completedPairs = [];
+      state.codex.completedCodexPairs = [];
+      
+      updateGamificationUI();
+
+      // Clear level complete panels
+      document.getElementById('symbols-complete-box').classList.add('hidden');
+      document.getElementById('codex-complete-box').classList.add('hidden');
+
+      // Re-init levels
+      initSymbolLevel();
+      resetLab();
+      initCodexLevel();
+
+      // Go back to tab 1
+      switchTab('symbols');
+    }
+
+    // Run when DOM fully loaded
+    window.addEventListener('DOMContentLoaded', () => {
+      initSymbolLevel();
+      initDiagramLevel();
+      initCodexLevel();
+    });
+  </script>
+</body>
+</html>
